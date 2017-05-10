@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"strings"
 )
 
 var nics []string = getNicAddresses()
@@ -25,6 +26,8 @@ func createResponse(protocol string, port int, r *http.Request) string {
 	checkError(protocol+": get Hostname", err)
 	body, err := ioutil.ReadAll(r.Body)
 	checkError(protocol+": get request body", err)
+
+	logRequest(protocol, r.RemoteAddr, string(body))
 	response := Response{
 		Port:        port,
 		Protocol:    r.Proto,
@@ -36,13 +39,15 @@ func createResponse(protocol string, port int, r *http.Request) string {
 
 	jsonBytes, err := json.MarshalIndent(response, "", "    ")
 	checkError(protocol+": marshal http JSON response", err)
-	return fmt.Sprintf("<html><body><pre>%s</pre></body></html>", string(jsonBytes))
+	responseHtml := fmt.Sprintf("<html><body><pre>%s</pre></body></html>", string(jsonBytes))
+
+	return responseHtml
 }
 
 func main() {
 	httpPort := flag.Int("httpPort", 80, "http port")
 	httpsPort := flag.Int("httpsPort", 443, "https port")
-	udpPort := flag.Int("udpPort", 90, "udp port")
+	udpPort := flag.Int("udpPort", 9090, "udp port")
 	serverCertFile := flag.String("cert", "server.crt", "location of server certificate to use")
 	serverKeyFile := flag.String("key", "server.key", "location of private key to use")
 
@@ -81,18 +86,10 @@ func startUdpListener(port int) {
 
 	for {
 		n, addr, err := serverConn.ReadFromUDP(buf)
+		checkError("Reading data from udp", err)
+
 		body := string(buf[0:n])
-		logMessage := fmt.Sprintf("%s - Received %s from %v\n\n", time.Now().Format(time.UnixDate), body, addr)
-
-		udpOutput, err := os.OpenFile("udp-access.log", os.O_APPEND|os.O_CREATE, os.FileMode(0766))
-		checkError("Open udp output file", err)
-		defer udpOutput.Close()
-
-		udpOutput.WriteString(logMessage)
-
-		if err != nil {
-			checkError("Error reading data from udp", err)
-		}
+		logRequest("UDP", addr.String(), body)
 
 		writeUdpResponse(addr.String(), body, port)
 	}
@@ -139,6 +136,11 @@ func checkError(desc string, err error) {
 		fmt.Println("Error: "+desc, err)
 		os.Exit(0)
 	}
+}
+
+func logRequest(protocol, address, body string) {
+	fmt.Printf("%s - %s, Message from %s recieved data: %s\n\n", strings.ToUpper(protocol), time.Now().Format(time.UnixDate), address, body)
+	
 }
 
 func address(port int) string {
