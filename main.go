@@ -8,8 +8,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"time"
 	"strings"
+	"time"
 )
 
 var nics []string = getNicAddresses()
@@ -21,7 +21,7 @@ type Response struct {
 	Nics []string
 }
 
-func createResponse(protocol string, port int, r *http.Request) string {
+func createResponse(protocol string, port int, r *http.Request) []byte {
 	hostname, err := os.Hostname()
 	checkError(protocol+": get Hostname", err)
 	body, err := ioutil.ReadAll(r.Body)
@@ -39,9 +39,8 @@ func createResponse(protocol string, port int, r *http.Request) string {
 
 	jsonBytes, err := json.MarshalIndent(response, "", "    ")
 	checkError(protocol+": marshal http JSON response", err)
-	responseHtml := fmt.Sprintf("<html><body><pre>%s</pre></body></html>", string(jsonBytes))
 
-	return responseHtml
+	return jsonBytes
 }
 
 func main() {
@@ -57,22 +56,24 @@ func main() {
 
 	go startHttp(*httpPort)
 	go startHttps(*httpsPort)
-	startUdpListener(*udpPort)
+	startUDPListener(*udpPort)
 }
 
-func createHttpHandler(port int) http.Handler {
+func createHTTPHandler(port int, protocol string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(createResponse("http", port, r)))
+		responseJSON := createResponse(protocol, port, r)
+		if strings.Contains(r.Header.Get("Accept"), "html") {
+			w.Header().Set("Content-Type", "text/html")
+			responseHTML := fmt.Sprintf("<html><body><pre>%s</pre></body></html>", string(responseJSON))
+			w.Write([]byte(responseHTML))
+		} else {
+			w.Header().Add("Content-Type", "application/json")
+			w.Write(responseJSON)
+		}
 	})
 }
 
-func createHttpsHandler(port int) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(createResponse("https", port, r)))
-	})
-}
-
-func startUdpListener(port int) {
+func startUDPListener(port int) {
 	fmt.Printf("Starting udp on port %v\n", port)
 	serverAddr, err := net.ResolveUDPAddr("udp", address(port))
 	checkError("Resolve udp address", err)
@@ -91,11 +92,11 @@ func startUdpListener(port int) {
 		body := string(buf[0:n])
 		logRequest("UDP", addr.String(), body)
 
-		writeUdpResponse(addr.String(), body, port)
+		writeUDPResponse(addr.String(), body, port)
 	}
 }
 
-func writeUdpResponse(addr, body string, port int) {
+func writeUDPResponse(addr, body string, port int) {
 	conn, err := net.Dial("udp", addr)
 	if err != nil {
 		checkError("Write UDP response", err)
@@ -122,12 +123,12 @@ func writeUdpResponse(addr, body string, port int) {
 
 func startHttp(port int) {
 	fmt.Printf("Starting http on port %v\n", port)
-	err := http.ListenAndServe(address(port), createHttpHandler(port))
+	err := http.ListenAndServe(address(port), createHTTPHandler(port, "http"))
 	checkError("Start http listening", err)
 }
 func startHttps(port int) {
 	fmt.Printf("Starting https on port %v\n", port)
-	err := http.ListenAndServeTLS(address(port), "server.crt", "server.key", createHttpsHandler(port))
+	err := http.ListenAndServeTLS(address(port), "server.crt", "server.key", createHTTPHandler(port, "https"))
 	checkError("Start https listening", err)
 }
 
@@ -140,7 +141,7 @@ func checkError(desc string, err error) {
 
 func logRequest(protocol, address, body string) {
 	fmt.Printf("%s - %s, Message from %s recieved data: %s\n\n", strings.ToUpper(protocol), time.Now().Format(time.UnixDate), address, body)
-	
+
 }
 
 func address(port int) string {
